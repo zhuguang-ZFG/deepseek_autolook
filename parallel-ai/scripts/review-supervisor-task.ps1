@@ -1,6 +1,8 @@
 param(
     [string]$Project,
-    [string]$Task
+    [string]$Task,
+    [switch]$AutoReview,
+    [string]$ReviewerProvider = "github-gpt-5-mini"
 )
 
 $ErrorActionPreference = "Stop"
@@ -14,6 +16,26 @@ if (-not (Test-Path $taskFile)) { throw "Task not found: $taskFile" }
 
 $taskData = Ensure-TaskSchema (Read-JsonFile $taskFile)
 
+# --- Auto-review shortcut ---
+if ($AutoReview) {
+    $reportDir = Join-Path (Get-ProjectRoot $Project) "reports"
+    $reports = @(Get-ChildItem $reportDir -Filter "$Task--*.md" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
+    if (-not $reports) {
+        Write-Host "Auto-review: no report found for task $Task" -ForegroundColor Yellow
+        exit 1
+    }
+    $reportContent = Get-Content $reports[0].FullName -Raw
+    $reviewResult = Invoke-AutoReview -Project $Project -Task $taskData -ReportContent $reportContent -ReviewerProvider $ReviewerProvider
+    if ($reviewResult) {
+        Apply-AutoReviewResult -Project $Project -Task $taskData -ReviewResult $reviewResult
+    }
+    else {
+        Write-Host "Auto-review returned no result." -ForegroundColor Yellow
+    }
+    exit 0
+}
+
+# --- Interactive review ---
 Write-Host ""
 Write-Host "=== Review: $($taskData.id) — $($taskData.title) ===" -ForegroundColor Cyan
 Write-Host "Status: $($taskData.status)"
@@ -59,6 +81,7 @@ foreach ($note in $taskData.notes) {
 }
 
 Write-Host ""
+Write-Host "Tip: use -AutoReview to let a model review this automatically" -ForegroundColor DarkGray
 $decision = Read-Host "Decision (done/rework/blocked/leave)"
 if (-not $decision) { exit 0 }
 

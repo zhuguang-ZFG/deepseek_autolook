@@ -756,7 +756,55 @@ function Ensure-ProjectStructure {
     return $root
 }
 
-# ---- Worker prompt builder (the heart of the dispatch system) -----------------
+# ---- Worker prompt builders (static-prefix-first for Anthropic prompt caching) ---
+
+# Static prompt prefix — identical for every dispatch, cached once by the API
+$Script:WorkerPromptPrefix = @'
+You are a worker in a supervised multi-agent coding workflow managed by DeepSeek Autolook.
+
+Required workflow:
+1. Inspect the target workspace and any directly relevant reference files.
+2. Stay within the allowed scope unless the task is impossible without expanding it.
+3. Return the final report as markdown on stdout. The supervisor launcher will save it to
+   the report path specified below.
+4. Structure the report with these sections:
+   - Summary
+   - Findings
+   - Acceptance checklist
+   - Files touched
+   - Open questions
+   - Next recommendation
+5. In "Acceptance checklist", copy every acceptance criterion verbatim and mark each
+   one as PASS or FAIL with one-line evidence.
+6. If the task changes behavior, cite exact reverse-source files/classes/methods that
+   justify the decision.
+7. If you make code changes, include exact file paths in the report.
+8. If blocked, explain the blocker in the report and stop there.
+9. Output only the report body. Do not add chatty prefaces, tool narration, or
+   surrounding markdown fences unless they are part of the report itself.
+10. When your work is submitted, the task should be treated as submitted for review,
+    not automatically done.
+
+Tool-use discipline:
+- Do not read large files wholesale unless the file is genuinely short.
+- Prefer Grep/search first, then Read only the exact relevant slices.
+- Keep each file read focused and small; avoid dumping long documents into context at once.
+- For roadmap, audit, ledger, or decompiled files, extract only the lines/classes/methods
+  needed for the current finding.
+- If a file is long, build your answer incrementally from multiple targeted reads instead
+  of one full read.
+- Treat the listed context files and reference anchors as the primary evidence set; do not
+  wander into unrelated subsystems unless a current finding cannot be justified without
+  that exact file.
+- Once you have enough evidence to satisfy the acceptance criteria, stop exploring and
+  write the report.
+- For analysis and audit tasks, prefer curated docs and named data classes over broad
+  codebase discovery.
+
+Do not claim to be a different provider. Do not widen the task on your own.
+
+--- TASK DETAILS FOLLOW ---
+'@
 
 function Build-WorkerPrompt {
     param(
@@ -766,146 +814,238 @@ function Build-WorkerPrompt {
         [string]$ReportPath
     )
 
-    $uniqueContextFiles = @()
-    foreach ($item in @($Task.contextFiles)) {
-        if (-not [string]::IsNullOrWhiteSpace($item) -and $uniqueContextFiles -notcontains $item) {
-            $uniqueContextFiles += $item
-        }
-    }
-
-    $uniqueReferenceAnchors = @()
-    foreach ($item in @($Task.referenceAnchors)) {
-        if (-not [string]::IsNullOrWhiteSpace($item) -and $uniqueReferenceAnchors -notcontains $item) {
-            $uniqueReferenceAnchors += $item
-        }
-    }
-
-    $acceptance = if ($Task.acceptanceCriteria) {
-        (($Task.acceptanceCriteria | ForEach-Object { "- $_" }) -join "`n")
-    }
-    else {
-        "- Complete the task and explain any residual gaps."
-    }
-
-    $allowedPaths = if ($Task.allowedPaths) {
-        (($Task.allowedPaths | ForEach-Object { "- $_" }) -join "`n")
-    }
-    else {
-        "- No explicit path limit recorded. Stay tightly scoped."
-    }
-
-    $dependsOn = if ($Task.dependsOn) {
-        (($Task.dependsOn | ForEach-Object { "- $_" }) -join "`n")
-    }
-    else {
-        "- None recorded."
-    }
-
-    $constraints = if ($Task.constraints) {
-        (($Task.constraints | ForEach-Object { "- $_" }) -join "`n")
-    }
-    else {
-        "- No extra constraints recorded."
-    }
-
-    $contextFiles = if ($uniqueContextFiles) {
-        (($uniqueContextFiles | ForEach-Object { "- $_" }) -join "`n")
-    }
-    else {
-        "- None recorded."
-    }
-
-    $referenceAnchors = if ($uniqueReferenceAnchors) {
-        (($uniqueReferenceAnchors | ForEach-Object { "- $_" }) -join "`n")
-    }
-    else {
-        "- None recorded."
-    }
-
-    $supervisorNotes = if ($Task.supervisorNotes) {
-        (($Task.supervisorNotes | ForEach-Object { "- $_" }) -join "`n")
-    }
-    else {
-        "- None recorded."
-    }
-
     $referencePath = if ($Project.referenceWorkspace) { $Project.referenceWorkspace } else { "(none)" }
 
-    return @"
-You are a worker in a supervised multi-agent coding workflow managed by DeepSeek Autolook.
+    # --- Build variable suffix (per-task, short) ---
+    $lines = @()
 
-Provider lane:
-- Provider: $($Provider.name)
-- Best for: $($Provider.strengths)
-- Runtime group: $($Provider.runtime_group)
-- Cost tier: $($Provider.cost_tier)
+    $lines += ""
+    $lines += "Report path: $ReportPath"
+    $lines += ""
+    $lines += "Provider lane:"
+    $lines += "- Name: $($Provider.name)"
+    $lines += "- Best for: $($Provider.strengths)"
+    $lines += "- Runtime: $($Provider.runtime_group)"
+    $lines += "- Cost tier: $($Provider.cost_tier)"
+    $lines += ""
+    $lines += "Project:"
+    $lines += "- ID: $($Project.id)"
+    $lines += "- Name: $($Project.name)"
+    $lines += "- Workspace: $($Project.workspace)"
+    $lines += "- Reference: $referencePath"
+    $lines += "- Goal: $($Project.goal)"
+    $lines += ""
+    $lines += "Task:"
+    $lines += "- ID: $($Task.id)"
+    $lines += "- Title: $($Task.title)"
+    $lines += "- Role: $($Task.role)"
+    $lines += "- Priority: $($Task.priority)"
+    $lines += "- Expected output: $($Task.expectedOutput)"
+    $lines += "- Objective: $($Task.objective)"
 
-Project:
-- Project ID: $($Project.id)
-- Project name: $($Project.name)
-- Target workspace: $($Project.workspace)
-- Reference workspace: $referencePath
-- Goal: $($Project.goal)
+    if ($Task.acceptanceCriteria -and @($Task.acceptanceCriteria).Count -gt 0) {
+        $lines += ""
+        $lines += "Acceptance criteria:"
+        foreach ($c in $Task.acceptanceCriteria) { $lines += "- $c" }
+    }
+    else {
+        $lines += ""
+        $lines += "Acceptance criteria:"
+        $lines += "- Complete the task and explain any residual gaps."
+    }
 
-Task:
-- Task ID: $($Task.id)
-- Title: $($Task.title)
-- Role: $($Task.role)
-- Owner: $($Task.owner)
-- Priority: $($Task.priority)
-- Expected output: $($Task.expectedOutput)
-- Objective: $($Task.objective)
+    if ($Task.allowedPaths -and @($Task.allowedPaths).Count -gt 0) {
+        $lines += ""
+        $lines += "Allowed edit scope:"
+        foreach ($p in $Task.allowedPaths) { $lines += "- $p" }
+    }
 
-Acceptance criteria:
-$acceptance
+    if ($Task.dependsOn -and @($Task.dependsOn).Count -gt 0) {
+        $lines += ""
+        $lines += "Task dependencies:"
+        foreach ($d in $Task.dependsOn) { $lines += "- $d" }
+    }
 
-Allowed edit scope:
-$allowedPaths
+    if ($Task.constraints -and @($Task.constraints).Count -gt 0) {
+        $lines += ""
+        $lines += "Hard constraints:"
+        foreach ($c in $Task.constraints) { $lines += "- $c" }
+    }
 
-Task dependencies:
-$dependsOn
+    if ($Task.contextFiles -and @($Task.contextFiles).Count -gt 0) {
+        $lines += ""
+        $lines += "Context files:"
+        foreach ($f in ($Task.contextFiles | Select-Object -Unique)) {
+            if (-not [string]::IsNullOrWhiteSpace($f)) { $lines += "- $f" }
+        }
+    }
 
-Hard constraints:
-$constraints
+    if ($Task.supervisorNotes -and @($Task.supervisorNotes).Count -gt 0) {
+        $lines += ""
+        $lines += "Supervisor notes:"
+        foreach ($n in $Task.supervisorNotes) { $lines += "- $n" }
+    }
 
-Context files to read first:
-$contextFiles
+    return $Script:WorkerPromptPrefix + ($lines -join "`n")
+}
 
-Reference anchors:
-$referenceAnchors
+# ---- Reviewer prompt builder ---------------------------------------------------
 
-Supervisor notes:
-$supervisorNotes
+$Script:ReviewerPromptPrefix = @'
+You are an automated reviewer in the DeepSeek Autolook supervisor system.
+Your only job is to read a worker's report and decide whether it satisfies
+the acceptance criteria.
 
-Required workflow:
-1. Inspect the target workspace and any directly relevant reference files.
-2. Stay within the allowed scope unless the task is impossible without expanding it.
-3. Return the final report as markdown on stdout. The supervisor launcher will save it to:
-   $ReportPath
-4. Structure the report with these sections:
-   - Summary
-   - Findings
-   - Acceptance checklist
-   - Files touched
-   - Open questions
-   - Next recommendation
-5. In "Acceptance checklist", copy every acceptance criterion verbatim and mark each one as PASS or FAIL with one-line evidence.
-6. If the task changes behavior, cite exact reverse-source files/classes/methods that justify the decision.
-7. If you make code changes, include exact file paths in the report.
-8. If blocked, explain the blocker in the report and stop there.
-9. Output only the report body. Do not add chatty prefaces, tool narration, or surrounding markdown fences unless they are part of the report itself.
-10. When your work is submitted, the task should be treated as submitted for review, not automatically done.
+Output ONLY a JSON object with this exact structure (no markdown fences, no extra text):
+{
+  "decision": "done" | "rework" | "blocked",
+  "summary": "one-line summary of what you found",
+  "missingCriteria": ["criterion that was not met", "..."],
+  "notes": "optional extra notes"
+}
 
-Tool-use discipline:
-- Do not read large files wholesale unless the file is genuinely short.
-- Prefer Grep/search first, then Read only the exact relevant slices.
-- Keep each file read focused and small; avoid dumping long documents into context at once.
-- For roadmap, audit, ledger, or decompiled files, extract only the lines/classes/methods needed for the current finding.
-- If a file is long, build your answer incrementally from multiple targeted reads instead of one full read.
-- Treat the listed context files and reference anchors as the primary evidence set; do not wander into unrelated subsystems unless a current finding cannot be justified without that exact file.
-- Once you have enough evidence to satisfy the acceptance criteria, stop exploring and write the report.
-- For analysis and audit tasks, prefer curated docs and named data classes over broad codebase discovery.
+Rules:
+- Mark "done" ONLY if every acceptance criterion is convincingly PASS.
+- Mark "rework" if any criterion is FAIL or not addressed.
+- Mark "blocked" only if the worker explicitly reports a blocker that prevents progress.
+- Be strict but fair. A vague report with no evidence is NOT a pass.
+- If the report does not contain an "Acceptance checklist" section, treat it as FAIL
+  for all criteria and mark "rework".
+- Do not add explanations, apologies, or markdown around the JSON.
+'@
 
-Do not claim to be a different provider. Do not widen the task on your own.
-"@
+function Build-ReviewerPrompt {
+    param(
+        $Task,
+        [string]$ReportContent
+    )
+
+    $lines = @()
+    $lines += ""
+    $lines += "Task to review:"
+    $lines += "- ID: $($Task.id)"
+    $lines += "- Title: $($Task.title)"
+    $lines += "- Objective: $($Task.objective)"
+
+    if ($Task.acceptanceCriteria -and @($Task.acceptanceCriteria).Count -gt 0) {
+        $lines += ""
+        $lines += "Acceptance criteria:"
+        foreach ($c in $Task.acceptanceCriteria) { $lines += "- $c" }
+    }
+
+    $lines += ""
+    $lines += "Worker report:"
+    $lines += "--- BEGIN REPORT ---"
+    if ($ReportContent.Length -gt 16000) {
+        $lines += $ReportContent.Substring(0, 16000)
+        $lines += "... [report truncated to 16000 chars]"
+    }
+    else {
+        $lines += $ReportContent
+    }
+    $lines += "--- END REPORT ---"
+
+    return $Script:ReviewerPromptPrefix + ($lines -join "`n")
+}
+
+# Auto-review dispatch: pipe reviewer prompt through Claude Code
+function Invoke-AutoReview {
+    param(
+        [string]$Project,
+        $Task,
+        [string]$ReportContent,
+        [string]$ReviewerProvider = "github-gpt-5-mini"
+    )
+
+    $reviewer = Find-ProviderEntry -Provider $ReviewerProvider
+    if (-not $reviewer) {
+        Write-Host "Auto-review: reviewer provider not found: $ReviewerProvider" -ForegroundColor Yellow
+        return $null
+    }
+
+    $prompt = Build-ReviewerPrompt -Task $Task -ReportContent $ReportContent
+    $settingsPath = $reviewer.settings_path
+
+    Write-Host "Auto-review: dispatching to $($reviewer.name)..." -ForegroundColor Cyan
+
+    try {
+        $result = $prompt | claude -p --settings $settingsPath --output-format text --permission-mode bypassPermissions --dangerously-skip-permissions 2>&1
+        $resultText = ($result | Out-String).Trim()
+
+        # Try to extract JSON
+        $jsonMatch = [regex]::Match($resultText, '\{[\s\S]*"decision"[\s\S]*\}')
+        if ($jsonMatch.Success) {
+            $reviewResult = $jsonMatch.Value | ConvertFrom-Json
+            return $reviewResult
+        }
+
+        # Fallback: try to parse whole output
+        try {
+            return ($resultText | ConvertFrom-Json)
+        }
+        catch {
+            Write-Host "Auto-review: could not parse JSON from reviewer output" -ForegroundColor Yellow
+            Write-Host "Raw output (first 500 chars): $($resultText.Substring(0, [Math]::Min(500, $resultText.Length)))" -ForegroundColor DarkGray
+            return $null
+        }
+    }
+    catch {
+        Write-Host "Auto-review failed: $_" -ForegroundColor Red
+        return $null
+    }
+}
+
+function Apply-AutoReviewResult {
+    param(
+        [string]$Project,
+        $Task,
+        $ReviewResult
+    )
+
+    if (-not $ReviewResult) { return }
+
+    $taskFile = Get-TaskFile -ProjectSlug $Project -TaskId $Task.id
+    if (-not (Test-Path $taskFile)) { return }
+
+    $taskData = Ensure-TaskSchema (Read-JsonFile $taskFile)
+
+    $decision = $ReviewResult.decision
+    $summary = if ($ReviewResult.summary) { [string]$ReviewResult.summary } else { "" }
+    $missing = @($ReviewResult.missingCriteria)
+
+    if ($decision -eq "done") {
+        $taskData.status = "done"
+        $taskData.review = [pscustomobject]@{
+            decision        = "done"
+            reviewedAt      = Get-IsoNow
+            reviewer        = "auto-review"
+            summary         = $summary
+            missingCriteria = $missing
+        }
+        Write-Host "Auto-review: PASS -> done" -ForegroundColor Green
+    }
+    elseif ($decision -eq "rework") {
+        $taskData.status = "rework"
+        $taskData.review = [pscustomobject]@{
+            decision        = "rework"
+            reviewedAt      = Get-IsoNow
+            reviewer        = "auto-review"
+            summary         = $summary
+            missingCriteria = $missing
+        }
+        Write-Host "Auto-review: FAIL -> rework ($summary)" -ForegroundColor Magenta
+    }
+    elseif ($decision -eq "blocked") {
+        $taskData.status = "blocked"
+        Write-Host "Auto-review: BLOCKED" -ForegroundColor Red
+    }
+    else {
+        Write-Host "Auto-review: unknown decision '$decision', leaving as submitted" -ForegroundColor Yellow
+        return
+    }
+
+    $taskData.updatedAt = Get-IsoNow
+    Write-JsonFile -Path $taskFile -Data $taskData
+    Clear-LocalLock -Project $Project -Task $Task.id
+    Write-SupervisorEvent -Type "auto-reviewed" -Project $Project -Task $Task.id -Worker $taskData.owner -Status $decision -Summary $summary -FilesTouched "" | Out-Null
 }

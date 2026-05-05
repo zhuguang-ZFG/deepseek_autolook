@@ -274,7 +274,7 @@ try {
         [System.IO.File]::WriteAllText('$($reportPath.Replace("'", "''"))', (`$resultText.TrimEnd() + [Environment]::NewLine), [System.Text.UTF8Encoding]::new(`$false))
         Write-Host "Report written: $($reportPath)" -ForegroundColor Green
         try {
-            & '$($submitScriptPath.Replace("'", "''"))' -Project '$($Project.Replace("'", "''"))' -Task '$($Task.Replace("'", "''"))' -Worker '$($providerEntry.slug.Replace("'", "''"))' -Summary 'report-captured-from-stream'
+            & '$($submitScriptPath.Replace("'", "''"))' -Project '$($Project.Replace("'", "''"))' -Task '$($Task.Replace("'", "''"))' -Worker '$($providerEntry.slug.Replace("'", "''"))' -Summary 'report-captured-from-stream' -AutoReview
         } catch {
             Write-Host "Submit status update failed: $($_.Exception.Message)" -ForegroundColor Yellow
         }

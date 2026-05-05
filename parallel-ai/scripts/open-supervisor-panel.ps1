@@ -87,6 +87,10 @@ while ($true) {
     Write-Host "[11] Mark task failure"
     Write-Host "[12] Close project check"
     Write-Host "[13] Open project folder"
+    Write-Host "[14] Start stable providers only"
+    Write-Host "[15] Check provider health"
+    Write-Host "[16] Open provider browser"
+    Write-Host "[17] Auto-chain (post-task-hook)"
     Write-Host "[0] Exit"
     $action = Read-Host "Choose"
 
@@ -223,6 +227,26 @@ while ($true) {
         "13" {
             if (-not $Project) { Write-Host "Select or create a project first." -ForegroundColor Yellow }
             else { Start-Process explorer.exe -ArgumentList (Get-ProjectRoot $Project) }
+        }
+        "14" {
+            & powershell.exe -NoExit -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "start-stable-providers.ps1")
+        }
+        "15" {
+            & powershell.exe -NoExit -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "check-stable-providers.ps1")
+        }
+        "16" {
+            & powershell.exe -NoExit -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "open-provider.ps1") -Workspace $Workspace
+        }
+        "17" {
+            if (-not $Project) { Write-Host "Select or create a project first." -ForegroundColor Yellow }
+            else {
+                Show-Tasks -ProjectSlug $Project
+                $taskId = Read-Host "Task ID"
+                $eventType = Read-Host "Event type (task-submitted/task-reviewed/task-failed)"
+                if ($taskId -and $eventType) {
+                    & (Join-Path $PSScriptRoot "post-task-hook.ps1") -Project $Project -Task $taskId -EventType $eventType -Workspace $Workspace
+                }
+            }
         }
         "0" { exit 0 }
         default { Write-Host "Unknown action." -ForegroundColor Yellow }

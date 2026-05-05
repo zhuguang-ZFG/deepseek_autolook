@@ -17,8 +17,8 @@ Get-Process python -ErrorAction SilentlyContinue | ForEach-Object {
     }
 }
 
-# Also try to kill by port range (15821-15860)
-$basePort = 15821
+# Kill by port range (15921-15960 for deepseek_autolook)
+$basePort = 15921
 for ($i = 0; $i -lt 40; $i++) {
     $port = $basePort + $i
     $conn = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue

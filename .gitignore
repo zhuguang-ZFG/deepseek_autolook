@@ -3,6 +3,7 @@ parallel-ai/logs/
 parallel-ai/settings/
 parallel-ai/providers.manifest.json
 parallel-ai/scripts/open-claude-*.ps1
+!parallel-ai/scripts/open-claude-task.ps1
 parallel-ai/scripts/parallel-*.cmd
 
 # Python cache
@@ -15,5 +16,6 @@ Thumbs.db
 Desktop.ini
 
 # Supervisor runtime
-parallel-ai/tasks/projects/
 parallel-ai/tasks/runtime/
+parallel-ai/tasks/projects/
+parallel-ai/tasks/projects/*/artifacts/

@@ -20,7 +20,7 @@ SCRIPTS_DIR = ROOT / "scripts"
 LOGS_DIR = ROOT / "logs"
 MANIFEST_PATH = ROOT / "providers.manifest.json"
 DB_PATH = Path.home() / ".cc-switch" / "cc-switch.db"
-PORT_BASE = 15821
+PORT_BASE = 15921
 
 
 def slugify(name: str) -> str:
@@ -121,6 +121,63 @@ def infer_budget_policy(name: str, model: str, base_url: str) -> str:
     if cost_tier == "standard":
         return "normal"
     return "prefer-first"
+
+
+def infer_stability_tier(name: str, model: str, base_url: str) -> str:
+    """Classify provider stability for dispatch ordering."""
+    text = f"{name} {model} {base_url}".lower()
+    if is_ollama(base_url):
+        return "local"
+    if "deepseek-v4-pro" in text:
+        return "stable"
+    if "deepseek" in text:
+        return "stable"
+    if "gpt-5-mini" in text:
+        return "stable"
+    if "longcat-flash-lite" in text or "longcat-flash-thinking" in text:
+        return "stable"
+    if "claude-haiku" in text:
+        return "candidate"
+    if "free" in text or "glm" in text or "nemotron" in text or "spark" in text:
+        return "candidate"
+    if "apinebula" in text or "yd" in text or "owl-alpha" in text:
+        return "experimental"
+    return "candidate"
+
+
+def infer_dispatch_priority(name: str, model: str, base_url: str) -> int:
+    """Infer the dispatch priority (lower = higher priority)."""
+    text = f"{name} {model} {base_url}".lower()
+    if "deepseek" in text and "v4-pro" not in text:
+        return 10
+    if "gpt-5-mini" in text:
+        return 20
+    if "longcat-flash-thinking" in text:
+        return 30
+    if "longcat-flash-lite" in text:
+        return 40
+    if "deepseek-v4-pro" in text:
+        return 50
+    if "claude-haiku" in text:
+        return 60
+    if "glm" in text:
+        return 70
+    if "free" in text:
+        return 80
+    if is_ollama(base_url):
+        return 90
+    return 100
+
+
+def infer_stable_candidate(name: str, model: str, base_url: str) -> bool:
+    """Whether this provider is a stable dispatch candidate."""
+    return infer_stability_tier(name, model, base_url) == "stable"
+
+
+def infer_healthcheck_candidate(name: str, model: str, base_url: str) -> bool:
+    """Whether this provider should be included in health checks."""
+    stability = infer_stability_tier(name, model, base_url)
+    return stability in {"stable", "candidate"}
 
 
 def load_providers() -> list[dict]:
@@ -276,6 +333,10 @@ def main():
             "runtime_group": infer_runtime_group(provider["name"], provider["model"], provider["base_url"]),
             "cost_tier": infer_cost_tier(provider["name"], provider["model"], provider["base_url"]),
             "budget_policy": infer_budget_policy(provider["name"], provider["model"], provider["base_url"]),
+            "stability_tier": infer_stability_tier(provider["name"], provider["model"], provider["base_url"]),
+            "dispatch_priority": infer_dispatch_priority(provider["name"], provider["model"], provider["base_url"]),
+            "stable_candidate": infer_stable_candidate(provider["name"], provider["model"], provider["base_url"]),
+            "healthcheck_candidate": infer_healthcheck_candidate(provider["name"], provider["model"], provider["base_url"]),
             "settings_path": str(SETTINGS_DIR / f"{slug}-settings.json"),
             "launcher_path": str(SCRIPTS_DIR / f"parallel-{slug}.cmd"),
             "open_script_path": str(SCRIPTS_DIR / f"open-claude-{slug}.ps1"),

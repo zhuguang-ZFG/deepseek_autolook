@@ -351,6 +351,96 @@ function Get-ProviderManifest {
     return (Get-Content $path -Raw | ConvertFrom-Json)
 }
 
+function Get-ProviderRuntimeHealthPath {
+    return (Join-Path (Get-SupervisorRuntimeRoot) "provider-health.json")
+}
+
+function Get-ProviderRuntimeHealth {
+    $path = Get-ProviderRuntimeHealthPath
+    if (-not (Test-Path $path)) {
+        return [pscustomobject]@{ providers = [pscustomobject]@{} }
+    }
+    $data = Get-Content $path -Raw | ConvertFrom-Json
+    if (-not $data) {
+        return [pscustomobject]@{ providers = [pscustomobject]@{} }
+    }
+    if (-not ($data.PSObject.Properties.Name -contains "providers")) {
+        $data | Add-Member -NotePropertyName providers -NotePropertyValue ([pscustomobject]@{}) -Force
+    }
+    return $data
+}
+
+function Save-ProviderRuntimeHealth {
+    param($Data)
+    Write-JsonFile -Path (Get-ProviderRuntimeHealthPath) -Data $Data
+}
+
+function Ensure-ProviderRuntimeHealthEntry {
+    param(
+        $HealthData,
+        [string]$ProviderSlug
+    )
+    if (-not ($HealthData.providers.PSObject.Properties.Name -contains $ProviderSlug)) {
+        $HealthData.providers | Add-Member -NotePropertyName $ProviderSlug -NotePropertyValue ([pscustomobject]@{
+                failureCount      = 0
+                disabledUntil     = ""
+                disabledReason    = ""
+                lastFailureAt     = ""
+                lastFailureReason = ""
+                lastRecoveredAt   = ""
+            }) -Force
+    }
+    return $HealthData.providers.$ProviderSlug
+}
+
+function Get-ProviderRuntimeHealthEntry {
+    param([string]$ProviderSlug)
+    $health = Get-ProviderRuntimeHealth
+    return Ensure-ProviderRuntimeHealthEntry -HealthData $health -ProviderSlug $ProviderSlug
+}
+
+function Reset-ProviderRuntimePenalty {
+    param([string]$ProviderSlug)
+    if ([string]::IsNullOrWhiteSpace($ProviderSlug)) {
+        return
+    }
+    $health = Get-ProviderRuntimeHealth
+    $entry = Ensure-ProviderRuntimeHealthEntry -HealthData $health -ProviderSlug $ProviderSlug
+    $entry.failureCount = 0
+    $entry.disabledUntil = ""
+    $entry.disabledReason = ""
+    $entry.lastRecoveredAt = Get-IsoNow
+    Save-ProviderRuntimeHealth -Data $health
+}
+
+function Register-ProviderFailure {
+    param(
+        [string]$ProviderSlug,
+        [string]$Reason
+    )
+    if ([string]::IsNullOrWhiteSpace($ProviderSlug)) {
+        return
+    }
+    $recoverableReasons = @("rate-limited", "provider-unavailable", "context-limited", "worker-exited")
+    if ($recoverableReasons -notcontains $Reason) {
+        return
+    }
+
+    $health = Get-ProviderRuntimeHealth
+    $entry = Ensure-ProviderRuntimeHealthEntry -HealthData $health -ProviderSlug $ProviderSlug
+    $entry.failureCount = [int]$entry.failureCount + 1
+    $entry.lastFailureAt = Get-IsoNow
+    $entry.lastFailureReason = $Reason
+
+    if ([int]$entry.failureCount -ge 2) {
+        $minutes = if ($Reason -eq "rate-limited") { 30 } else { 15 }
+        $entry.disabledUntil = (Get-Date).AddMinutes($minutes).ToString("s")
+        $entry.disabledReason = ("runtime-health:" + $Reason)
+    }
+
+    Save-ProviderRuntimeHealth -Data $health
+}
+
 function Get-ProviderDispatchBlockReason {
     param($Provider)
     if (-not $Provider) {
@@ -364,12 +454,101 @@ function Get-ProviderDispatchBlockReason {
         }
         return "dispatch-disabled"
     }
+    $health = Get-ProviderRuntimeHealth
+    $entry = Ensure-ProviderRuntimeHealthEntry -HealthData $health -ProviderSlug $Provider.slug
+    $disabledUntil = Get-DateOrNull $entry.disabledUntil
+    if ($disabledUntil -and $disabledUntil -gt (Get-Date)) {
+        if (-not [string]::IsNullOrWhiteSpace($entry.disabledReason)) {
+            return [string]$entry.disabledReason
+        }
+        return "runtime-health-disabled"
+    }
+    if ($disabledUntil -and $disabledUntil -le (Get-Date)) {
+        $entry.failureCount = 0
+        $entry.disabledUntil = ""
+        $entry.disabledReason = ""
+        $entry.lastRecoveredAt = Get-IsoNow
+        Save-ProviderRuntimeHealth -Data $health
+    }
     return $null
 }
 
 function Get-DispatchableProviders {
     $manifest = Get-ProviderManifest
     return @($manifest.providers | Where-Object { -not (Get-ProviderDispatchBlockReason $_) })
+}
+
+function Get-StableDispatchProviders {
+    return @(
+        Get-DispatchableProviders |
+        Where-Object {
+            ($_.PSObject.Properties.Name -contains "stable_candidate") -and
+            [bool]$_.stable_candidate
+        } |
+        Sort-Object dispatch_priority, name
+    )
+}
+
+function Get-StableWorkerNames {
+    return @(
+        Get-StableDispatchProviders | ForEach-Object { $_.name }
+    )
+}
+
+function Get-StableHealthcheckProviders {
+    return @(
+        Get-DispatchableProviders |
+        Where-Object {
+            ($_.PSObject.Properties.Name -contains "healthcheck_candidate") -and
+            [bool]$_.healthcheck_candidate
+        } |
+        Sort-Object dispatch_priority, name
+    )
+}
+
+function Test-IsStableWorkerName {
+    param([string]$WorkerName)
+    if ([string]::IsNullOrWhiteSpace($WorkerName)) {
+        return $false
+    }
+    return @(Get-StableWorkerNames) -icontains $WorkerName
+}
+
+function Get-PreferredDispatchWorkerOrder {
+    param($Task)
+
+    $candidateWorkers = @()
+    foreach ($worker in @(Get-WorkerPreferenceOrder $Task)) {
+        if ([string]::IsNullOrWhiteSpace($worker)) {
+            continue
+        }
+        if ($candidateWorkers -icontains $worker) {
+            continue
+        }
+        if ($worker -ieq "cursor") {
+            continue
+        }
+        $candidateWorkers += $worker
+    }
+
+    $ordered = @()
+    foreach ($provider in @(Get-StableDispatchProviders)) {
+        foreach ($worker in $candidateWorkers) {
+            if ($worker -ieq $provider.name -or $worker -ieq $provider.slug) {
+                if ($ordered -notcontains $worker) {
+                    $ordered += $worker
+                }
+            }
+        }
+    }
+
+    foreach ($worker in $candidateWorkers) {
+        if ($ordered -icontains $worker) {
+            continue
+        }
+        $ordered += $worker
+    }
+    return $ordered
 }
 
 function Find-ProviderEntry {

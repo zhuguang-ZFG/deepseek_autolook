@@ -37,9 +37,11 @@ foreach ($taskData in $taskList) {
             $taskData = Clear-TaskLease $taskData
             $taskData = Add-AssignmentHistoryEntry -Task $taskData -Worker $taskData.owner -Outcome "stale" -Reason "lease-expired"
             $taskData.notes = @($taskData.notes) + ("[" + (Get-IsoNow) + "] RECONCILED: stale lease expired")
+            $failedProviderSlug = [string]$taskData.lastProvider
             $taskFile = Get-TaskFile -ProjectSlug $Project -TaskId $taskData.id
             Write-JsonFile -Path $taskFile -Data $taskData
             Clear-LocalLock -Project $Project -Task $taskData.id
+            Register-ProviderFailure -ProviderSlug $failedProviderSlug -Reason "worker-exited"
             Write-SupervisorEvent -Type "task-reconciled" -Project $Project -Task $taskData.id -Worker $taskData.owner -Status "stale" -Summary "lease-expired" -FilesTouched "" | Out-Null
             $staleTasks += $taskData
         } else {

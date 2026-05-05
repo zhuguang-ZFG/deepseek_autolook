@@ -18,10 +18,12 @@ $taskFile = Get-TaskFile -ProjectSlug $Project -TaskId $Task
 if (-not (Test-Path $taskFile)) { throw "Task not found: $taskFile" }
 
 $taskData = Ensure-TaskSchema (Read-JsonFile $taskFile)
+$failedProviderSlug = [string]$taskData.lastProvider
 
 $taskData.status = "ready"
 $taskData.updatedAt = Get-IsoNow
 $taskData.lastFailureReason = $Reason
+$taskData.lastRecoveredAt = Get-IsoNow
 $taskData = Clear-TaskLease $taskData
 
 $noteText = if ($Note) { $Note } else { "failure: " + $Reason }
@@ -30,6 +32,7 @@ $taskData = Add-AssignmentHistoryEntry -Task $taskData -Worker $taskData.owner -
 
 Write-JsonFile -Path $taskFile -Data $taskData
 Clear-LocalLock -Project $Project -Task $Task
+Register-ProviderFailure -ProviderSlug $failedProviderSlug -Reason $Reason
 Write-SupervisorEvent -Type "task-failed" -Project $Project -Task $Task -Worker $taskData.owner -Status "failed" -Summary $Reason -FilesTouched "" | Out-Null
 Write-Host "Task $Task marked as failed ($Reason)" -ForegroundColor Yellow
 

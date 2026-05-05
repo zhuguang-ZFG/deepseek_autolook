@@ -59,11 +59,11 @@ if ($Free -or (-not $Provider)) {
         $selected = $freeCandidates | Where-Object { $_.slug -match "glm|zhipu" } | Select-Object -First 1
     }
     # 创意/生成任务 → minimax
-    if (-not $selected -and $role -match "create|generate|write|draft")) {
+    if (-not $selected -and $role -match "create|generate|write|draft") {
         $selected = $freeCandidates | Where-Object { $_.slug -match "minimax" } | Select-Object -First 1
     }
     # 快速扫描 → spark-lite
-    if (-not $selected -and $role -match "scan|list|summar")) {
+    if (-not $selected -and $role -match "scan|list|summar") {
         $selected = $freeCandidates | Where-Object { $_.slug -match "spark" } | Select-Object -First 1
     }
     # 默认：openrouter/free (通用)

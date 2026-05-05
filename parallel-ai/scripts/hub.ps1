@@ -40,12 +40,12 @@ function Show-HubStatus {
     $byStatus = $tasks | Group-Object status
     foreach ($group in $byStatus) {
         $icon = switch ($group.Name) {
-            "done"      { "[✓]" }
-            "dispatched" { "[→]" }
-            "submitted"  { "[?]" }
-            "rework"    { "[↻]" }
-            "blocked"   { "[✗]" }
-            default     { "[ ]" }
+            "done"       { "[OK]" }
+            "dispatched" { ">>>" }
+            "submitted"  { "[??]" }
+            "rework"     { "[RW]" }
+            "blocked"    { "[XX]" }
+            default      { "[  ]" }
         }
         Write-Host "  $icon $($group.Name): $($group.Count)"
     }
@@ -70,7 +70,7 @@ function Show-HubStatus {
     foreach ($t in ($tasks | Sort-Object priority, id)) {
         if ($t.dependsOn -and @($t.dependsOn).Count -gt 0) {
             $hasDeps = $true
-            $icon = switch ($t.status) { "done" { "✓" } "dispatched" { "→" } "submitted" { "?" } "blocked" { "✗" } default { " " } }
+            $icon = switch ($t.status) { "done" { "OK" } "dispatched" { ">>" } "submitted" { "??" } "blocked" { "XX" } default { "  " } }
             Write-Host "  $icon $($t.id) ← $(@($t.dependsOn) -join ', ')"
         }
     }
@@ -100,7 +100,7 @@ function Show-HubStatus {
         Write-Host ""
         Write-Host "── 提供者健康 ──" -ForegroundColor DarkCyan
         foreach ($d in $disabledProviders) {
-            Write-Host "  [⚠] $($d.slug): 禁用至 $($d.until.ToString('HH:mm')) (失败次数: $($d.failures)) — $($d.reason)" -ForegroundColor Yellow
+            Write-Host "  [!!] $($d.slug): disabled until $($d.until.ToString('HH:mm')) (failures: $($d.failures)) - $($d.reason)" -ForegroundColor Yellow
         }
     }
 
@@ -388,7 +388,7 @@ function Start-Hub {
                     }
                     $pick = Read-Host "选择任务 (序号/id/回车=第一个)"
                     $taskId = if (-not $pick) { $ready[0].id }
-                              elseif ($pick -match "^\d+$") { $ready[[int]$pick - 1].id }
+                              elseif ($pick -match "^\d+$") { $ready[([int]$pick - 1)].id }
                               else { $pick }
                     if ($taskId) {
                         $projectData = Read-JsonFile (Get-ProjectFile $Project)

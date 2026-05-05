@@ -193,6 +193,8 @@ function Invoke-Check {
 }
 
 function Invoke-Clean {
+    Write-Host "Stopping proxies first..." -ForegroundColor Cyan
+    & powershell.exe -ExecutionPolicy Bypass -File (Join-Path $ScriptsDir "stop-parallel-ai.ps1") | Out-Null
     Write-Host "Cleaning all runtime state..." -ForegroundColor Yellow
     $dirs = @(
         (Join-Path $Root "parallel-ai\settings"),

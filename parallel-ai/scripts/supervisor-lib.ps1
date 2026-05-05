@@ -656,12 +656,14 @@ function Update-ProviderUsage {
     }
     if (-not ($usage.providers.PSObject.Properties.Name -contains $Provider.slug)) {
         $usage.providers | Add-Member -NotePropertyName $Provider.slug -NotePropertyValue ([pscustomobject]@{
-                name          = $Provider.name
-                runtimeGroup  = $Provider.runtime_group
-                costTier      = $Provider.cost_tier
-                dispatchCount = 0
-                lastProject   = ""
-                lastTask      = ""
+                name           = $Provider.name
+                runtimeGroup   = $Provider.runtime_group
+                costTier       = $Provider.cost_tier
+                dispatchCount  = 0
+                successCount   = 0
+                failureCount   = 0
+                lastProject    = ""
+                lastTask       = ""
                 lastDispatchAt = ""
             }) -Force
     }
@@ -673,6 +675,23 @@ function Update-ProviderUsage {
     $entry.lastProject = $Project
     $entry.lastTask = $Task
     $entry.lastDispatchAt = Get-IsoNow
+    Write-JsonFile -Path (Get-UsageFilePath) -Data $usage
+}
+
+function Update-ProviderSuccessRate {
+    param(
+        [string]$ProviderSlug,
+        [bool]$Success
+    )
+    if ([string]::IsNullOrWhiteSpace($ProviderSlug)) { return }
+    $usage = Get-ProviderUsage
+    if (-not ($usage.providers.PSObject.Properties.Name -contains $ProviderSlug)) { return }
+    $entry = $usage.providers.$ProviderSlug
+    if ($Success) {
+        $entry.successCount = [int]$entry.successCount + 1
+    } else {
+        $entry.failureCount = [int]$entry.failureCount + 1
+    }
     Write-JsonFile -Path (Get-UsageFilePath) -Data $usage
 }
 
@@ -1022,6 +1041,7 @@ function Apply-AutoReviewResult {
             summary         = $summary
             missingCriteria = $missing
         }
+        Update-ProviderSuccessRate -ProviderSlug $taskData.lastProvider -Success $true
         Write-Host "Auto-review: PASS -> done" -ForegroundColor Green
     }
     elseif ($decision -eq "rework") {
@@ -1033,6 +1053,7 @@ function Apply-AutoReviewResult {
             summary         = $summary
             missingCriteria = $missing
         }
+        Update-ProviderSuccessRate -ProviderSlug $taskData.lastProvider -Success $false
         Write-Host "Auto-review: FAIL -> rework ($summary)" -ForegroundColor Magenta
     }
     elseif ($decision -eq "blocked") {

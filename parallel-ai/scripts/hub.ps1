@@ -63,10 +63,62 @@ function Show-HubStatus {
         }
     }
 
+    # 任务依赖链
+    Write-Host ""
+    Write-Host "── 任务依赖链 ──" -ForegroundColor DarkCyan
+    $hasDeps = $false
+    foreach ($t in ($tasks | Sort-Object priority, id)) {
+        if ($t.dependsOn -and @($t.dependsOn).Count -gt 0) {
+            $hasDeps = $true
+            $icon = switch ($t.status) { "done" { "✓" } "dispatched" { "→" } "submitted" { "?" } "blocked" { "✗" } default { " " } }
+            Write-Host "  $icon $($t.id) ← $(@($t.dependsOn) -join ', ')"
+        }
+    }
+    if (-not $hasDeps) {
+        Write-Host "  (任务间无依赖关系)" -ForegroundColor DarkGray
+    }
+
     Write-Host ""
     Write-Host "── 可用工人 (稳定优先) ──" -ForegroundColor DarkCyan
     foreach ($p in $stableProviders) {
         Write-Host "  [$($p.dispatch_priority)] $($p.name) — $($p.strengths)" -ForegroundColor DarkGray
+    }
+
+    # 提供者健康
+    $health = Get-ProviderRuntimeHealth
+    $disabledProviders = @()
+    foreach ($prop in $health.providers.PSObject.Properties) {
+        $h = $prop.Value
+        if ($h.disabledUntil) {
+            $until = Get-DateOrNull $h.disabledUntil
+            if ($until -and $until -gt (Get-Date)) {
+                $disabledProviders += [pscustomobject]@{ slug = $prop.Name; until = $until; reason = $h.disabledReason; failures = $h.failureCount }
+            }
+        }
+    }
+    if ($disabledProviders.Count -gt 0) {
+        Write-Host ""
+        Write-Host "── 提供者健康 ──" -ForegroundColor DarkCyan
+        foreach ($d in $disabledProviders) {
+            Write-Host "  [⚠] $($d.slug): 禁用至 $($d.until.ToString('HH:mm')) (失败次数: $($d.failures)) — $($d.reason)" -ForegroundColor Yellow
+        }
+    }
+
+    # 提供者成功率
+    $usage = Get-ProviderUsage
+    Write-Host ""
+    Write-Host "── 提供者使用统计 ──" -ForegroundColor DarkCyan
+    $usageSorted = @($usage.providers.PSObject.Properties | Sort-Object { [int]$_.Value.dispatchCount } -Descending)
+    if ($usageSorted.Count -eq 0) {
+        Write-Host "  (尚无用统计)" -ForegroundColor DarkGray
+    } else {
+        foreach ($prop in $usageSorted) {
+            $u = $prop.Value
+            $total = [int]$u.dispatchCount
+            $success = [int]($u.successCount)
+            $rate = if ($total -gt 0) { [int](100 * $success / $total) } else { "-" }
+            Write-Host "  $($prop.Name): $total 次 | 成功率 ${rate}% (成功=$success, 失败=$([int]$u.failureCount))" -ForegroundColor DarkGray
+        }
     }
 
     return $true

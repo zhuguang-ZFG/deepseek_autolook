@@ -94,6 +94,7 @@ while ($true) {
     Write-Host "[18] Launch dashboard (tiled layout)"
     Write-Host "[19] Start hub (DeepSeek TUI as orchestrator)"
     Write-Host "[20] OpenCode dispatch (free agent auto-select)"
+    Write-Host "[21] Watchdog (autonomous loop)"
     Write-Host "[0] Exit"
     $action = Read-Host "Choose"
 
@@ -265,6 +266,12 @@ while ($true) {
                 if ($taskId) {
                     & (Join-Path $PSScriptRoot "open-opencode-task.ps1") -Project $Project -Task $taskId -Workspace $Workspace -Free
                 }
+            }
+        }
+        "21" {
+            if (-not $Project) { Write-Host "Select or create a project first." -ForegroundColor Yellow }
+            else {
+                & powershell.exe -NoExit -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "watchdog.ps1") -Project $Project -Workspace $Workspace
             }
         }
         "0" { exit 0 }

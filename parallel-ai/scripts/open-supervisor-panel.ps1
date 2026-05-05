@@ -91,6 +91,7 @@ while ($true) {
     Write-Host "[15] Check provider health"
     Write-Host "[16] Open provider browser"
     Write-Host "[17] Auto-chain (post-task-hook)"
+    Write-Host "[18] Launch dashboard (tiled layout)"
     Write-Host "[0] Exit"
     $action = Read-Host "Choose"
 
@@ -247,6 +248,9 @@ while ($true) {
                     & (Join-Path $PSScriptRoot "post-task-hook.ps1") -Project $Project -Task $taskId -EventType $eventType -Workspace $Workspace
                 }
             }
+        }
+        "18" {
+            & powershell.exe -NoExit -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "start-dashboard.ps1") -Workspace $Workspace
         }
         "0" { exit 0 }
         default { Write-Host "Unknown action." -ForegroundColor Yellow }

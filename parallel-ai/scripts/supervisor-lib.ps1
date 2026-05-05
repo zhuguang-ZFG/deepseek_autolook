@@ -506,6 +506,18 @@ function Get-StableHealthcheckProviders {
     )
 }
 
+function Get-FreeProviders {
+    return @(
+        Get-DispatchableProviders |
+        Where-Object { $_.cost_tier -eq "cheap" -and $_.runtime_group -eq "cloud" } |
+        Sort-Object dispatch_priority, name
+    )
+}
+
+function Get-FreeProviderNames {
+    return @(Get-FreeProviders | ForEach-Object { $_.name })
+}
+
 function Test-IsStableWorkerName {
     param([string]$WorkerName)
     if ([string]::IsNullOrWhiteSpace($WorkerName)) {

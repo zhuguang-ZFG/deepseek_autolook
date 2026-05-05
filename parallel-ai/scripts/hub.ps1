@@ -312,6 +312,8 @@ function Start-Hub {
         Write-Host "  [d] 分派就绪任务"
         Write-Host "  [r] 审查任务"
         Write-Host "  [c] 链式调度 (自动全流程)"
+        Write-Host "  [f] 列出免费模型"
+        Write-Host "  [o] OpenCode 分派 (免费智能体)"
         Write-Host "  [q] 退出中枢"
         $cmd = Read-Host "中枢指令"
 
@@ -360,6 +362,41 @@ function Start-Hub {
                 }
             }
             "c" { Invoke-HubChain -Project $Project }
+            "f" {
+                $free = @(Get-FreeProviders)
+                if ($free.Count -eq 0) {
+                    Write-Host "没有可用的免费云模型" -ForegroundColor Yellow
+                } else {
+                    Write-Host ""
+                    Write-Host "── 免费可用模型 ($($free.Count) 个) ──" -ForegroundColor Cyan
+                    foreach ($p in $free) {
+                        Write-Host "  [$($p.dispatch_priority)] $($p.name) :$($p.port)" -ForegroundColor White
+                        Write-Host "      $($p.strengths)" -ForegroundColor DarkGray
+                    }
+                    Write-Host ""
+                    Write-Host "  用 [o] 自动选择并分派" -ForegroundColor DarkGray
+                }
+            }
+            "o" {
+                $ready = @(Get-ReadyDispatchTasks -ProjectSlug $Project)
+                if ($ready.Count -eq 0) {
+                    Write-Host "没有就绪任务" -ForegroundColor Yellow
+                } else {
+                    Write-Host "就绪任务 (将用免费模型自动选择):" -ForegroundColor Cyan
+                    for ($i = 0; $i -lt $ready.Count; $i++) {
+                        Write-Host "  [$($i+1)] $($ready[$i].id): $($ready[$i].title)"
+                    }
+                    $pick = Read-Host "选择任务 (序号/id/回车=第一个)"
+                    $taskId = if (-not $pick) { $ready[0].id }
+                              elseif ($pick -match "^\d+$") { $ready[[int]$pick - 1].id }
+                              else { $pick }
+                    if ($taskId) {
+                        $projectData = Read-JsonFile (Get-ProjectFile $Project)
+                        $ws = if ($projectData.workspace) { $projectData.workspace } else { (Get-Location).Path }
+                        & (Join-Path $PSScriptRoot "open-opencode-task.ps1") -Project $Project -Task $taskId -Workspace $ws -Free
+                    }
+                }
+            }
             "q" { Write-Host "退出中枢" -ForegroundColor Cyan; return }
             default { Write-Host "未知指令" -ForegroundColor Yellow }
         }

@@ -15,7 +15,7 @@
 
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("sync", "start", "dashboard", "hub", "rd", "verify", "stop", "status", "panel", "help")]
+    [ValidateSet("sync", "start", "dashboard", "hub", "rd", "verify", "stop", "status", "panel", "check", "clean", "help")]
     [string]$Command = "help",
 
     [string]$Project,
@@ -187,6 +187,36 @@ function Invoke-Panel {
     & powershell.exe -NoExit -ExecutionPolicy Bypass -File (Join-Path $ScriptsDir "open-supervisor-panel.ps1") -Workspace $Workspace
 }
 
+function Invoke-Check {
+    Write-Host "Running isolation check..." -ForegroundColor Cyan
+    & powershell.exe -ExecutionPolicy Bypass -File (Join-Path $ScriptsDir "check-isolation.ps1")
+}
+
+function Invoke-Clean {
+    Write-Host "Cleaning all runtime state..." -ForegroundColor Yellow
+    $dirs = @(
+        (Join-Path $Root "parallel-ai\settings"),
+        (Join-Path $Root "parallel-ai\logs"),
+        (Join-Path $Root "parallel-ai\tasks\runtime"),
+        (Join-Path $Root "parallel-ai\tasks\projects")
+    )
+    foreach ($dir in $dirs) {
+        if (Test-Path $dir) {
+            Write-Host "  Remove: $dir" -ForegroundColor DarkGray
+            Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    $files = @(
+        (Join-Path $Root "parallel-ai\providers.manifest.json"),
+        (Join-Path $Root "parallel-ai\scripts\open-claude-*.ps1"),
+        (Join-Path $Root "parallel-ai\scripts\parallel-*.cmd")
+    )
+    foreach ($pattern in $files) {
+        Get-ChildItem $pattern -ErrorAction SilentlyContinue | Remove-Item -Force
+    }
+    Write-Host "Done. Run 'sync' to rebuild." -ForegroundColor Green
+}
+
 function Show-Help {
     Write-Host ""
     Write-Host "DeepSeek Autolook — Multi-AI Parallel Programming Workbench" -ForegroundColor Cyan
@@ -201,6 +231,8 @@ function Show-Help {
     Write-Host "  panel     启动监督者面板（18 项操作菜单）"
     Write-Host "  rd        创建 RD 任务链（4 个种子任务）"
     Write-Host "  verify    运行系统验证"
+    Write-Host "  check     验证隔离性 (端口/设置/数据不冲突)"
+    Write-Host "  clean     清除所有运行时状态 (不影响 cc-switch)"
     Write-Host "  help      显示此帮助"
     Write-Host ""
     Write-Host "Examples:" -ForegroundColor DarkCyan
@@ -229,6 +261,8 @@ switch ($Command) {
     "panel"     { Invoke-Panel }
     "rd"        { Invoke-RD }
     "verify"    { Invoke-Verify }
+    "check"     { Invoke-Check }
+    "clean"     { Invoke-Clean }
     "help"      {
         Test-Prerequisites | Out-Null
         Write-Host ""

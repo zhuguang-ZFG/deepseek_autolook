@@ -17,8 +17,13 @@ Get-Process python -ErrorAction SilentlyContinue | ForEach-Object {
     }
 }
 
-# Kill by port range (15921-15960 for deepseek_autolook)
+# Kill by port range from manifest (dynamic, defaults to 15921-15960)
 $basePort = 15921
+$manifestPath = Join-Path (Split-Path -Parent $PSScriptRoot) "providers.manifest.json"
+if (Test-Path $manifestPath) {
+    $m = Get-Content $manifestPath -Raw | ConvertFrom-Json
+    if ($m.providers.Count -gt 0) { $basePort = [int]$m.providers[0].port }
+}
 for ($i = 0; $i -lt 40; $i++) {
     $port = $basePort + $i
     $conn = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue

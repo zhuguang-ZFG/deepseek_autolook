@@ -20,7 +20,7 @@ SCRIPTS_DIR = ROOT / "scripts"
 LOGS_DIR = ROOT / "logs"
 MANIFEST_PATH = ROOT / "providers.manifest.json"
 DB_PATH = Path.home() / ".cc-switch" / "cc-switch.db"
-PORT_BASE = 15921
+PORT_BASE = int(os.environ.get("AUTOLOOK_PORT_BASE", "15921"))
 
 
 def slugify(name: str) -> str:

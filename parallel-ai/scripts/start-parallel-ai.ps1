@@ -15,6 +15,25 @@ if (-not (Test-Path $manifestPath)) {
 $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
 $providers = $manifest.providers
 
+# ---- 端口冲突预检 ----
+Write-Host ""
+Write-Host "Pre-flight: port conflict check..." -ForegroundColor DarkCyan
+$conflicts = @()
+foreach ($provider in $providers) {
+    $existing = Get-NetTCPConnection -LocalPort ([int]$provider.port) -ErrorAction SilentlyContinue
+    if ($existing) {
+        $proc = Get-Process -Id $existing.OwningProcess -ErrorAction SilentlyContinue
+        $conflicts += "$($provider.name):$($provider.port) (PID $($existing.OwningProcess) $($proc.ProcessName))"
+    }
+}
+if ($conflicts.Count -gt 0) {
+    Write-Host "  PORT CONFLICT:" -ForegroundColor Red
+    foreach ($c in $conflicts) { Write-Host "    $c" -ForegroundColor Red }
+    Write-Host "  Set AUTOLOOK_PORT_BASE env var and re-sync, or stop conflicting processes." -ForegroundColor Yellow
+    exit 1
+}
+Write-Host "  All ports clear." -ForegroundColor Green
+
 Write-Host ""
 Write-Host "Starting $($providers.Count) provider proxies..." -ForegroundColor Green
 

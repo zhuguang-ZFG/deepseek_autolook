@@ -10,6 +10,7 @@ Usage:
   python sync-parallel-providers.py
 """
 import json
+import os
 import re
 import sqlite3
 from pathlib import Path

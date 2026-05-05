@@ -92,6 +92,7 @@ while ($true) {
     Write-Host "[16] Open provider browser"
     Write-Host "[17] Auto-chain (post-task-hook)"
     Write-Host "[18] Launch dashboard (tiled layout)"
+    Write-Host "[19] Start hub (DeepSeek TUI as orchestrator)"
     Write-Host "[0] Exit"
     $action = Read-Host "Choose"
 
@@ -251,6 +252,9 @@ while ($true) {
         }
         "18" {
             & powershell.exe -NoExit -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "start-dashboard.ps1") -Workspace $Workspace
+        }
+        "19" {
+            & powershell.exe -NoExit -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "hub.ps1")
         }
         "0" { exit 0 }
         default { Write-Host "Unknown action." -ForegroundColor Yellow }

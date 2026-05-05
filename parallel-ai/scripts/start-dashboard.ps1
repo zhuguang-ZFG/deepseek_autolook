@@ -8,8 +8,8 @@
 # Layout:
 #   ┌──────────────────────┬──────────────┐
 #   │                      │  Worker 1    │
-#   │      Codex           ├──────────────┤
-#   │    (supervisor)      │  Worker 2    │
+#   │   DeepSeek TUI       ├──────────────┤
+#   │   (中枢/编排)         │  Worker 2    │
 #   │                      ├──────────────┤
 #   │                      │  Worker 3    │
 #   └──────────────────────┴──────────────┘
@@ -19,7 +19,8 @@ param(
     [string]$Workspace = (Get-Location).Path,
     [int]$MainWidthPercent = 65,
     [string[]]$Workers = @("deepseek", "longcat-flash-thinking-2601", "github-gpt-5-mini"),
-    [int]$MonitorIndex = 0
+    [int]$MonitorIndex = 0,
+    [string]$Hub = "tui"
 )
 
 $ErrorActionPreference = "Continue"
@@ -87,18 +88,23 @@ $sideX = $left + $mainW + $margin
 Write-Host "Screen: $totalW x $totalH at ($left, $top)" -ForegroundColor DarkGray
 Write-Host "Main: ${mainW}px | Side: ${sideW}px" -ForegroundColor DarkGray
 
-# ---- Launch Codex main window ------------------------------------------------
+# ---- Launch main hub window --------------------------------------------------
 Write-Host ""
-Write-Host "Launching Codex (supervisor)..." -ForegroundColor Cyan
-$codexProc = Start-Process powershell.exe -ArgumentList "-NoExit", "-Command", "Set-Location '$Workspace'; codex" -WindowStyle Normal -PassThru
-Start-Sleep -Seconds 2
-
-# Position Codex window
-try {
-    [WindowLayout]::MoveWindow($codexProc.MainWindowHandle, $left, $top, $mainW, $totalH, $true)
-    Write-Host "  Codex positioned: ${left},${top} ${mainW}x${totalH}" -ForegroundColor Green
-} catch {
-    Write-Host "  Codex position failed (will use default): $_" -ForegroundColor Yellow
+if ($Hub -eq "tui") {
+    Write-Host "中枢: 当前 DeepSeek TUI 会话 (不启动额外窗口)" -ForegroundColor Green
+    Write-Host "  使用 hub.ps1 的 Start-Hub 或直接在 TUI 中管理" -ForegroundColor DarkGray
+} elseif ($Hub -eq "codex") {
+    Write-Host "Launching Codex (supervisor)..." -ForegroundColor Cyan
+    $codexProc = Start-Process powershell.exe -ArgumentList "-NoExit", "-Command", "Set-Location '$Workspace'; codex" -WindowStyle Normal -PassThru
+    Start-Sleep -Seconds 2
+    try {
+        [WindowLayout]::MoveWindow($codexProc.MainWindowHandle, $left, $top, $mainW, $totalH, $true)
+        Write-Host "  Codex positioned: ${left},${top} ${mainW}x${totalH}" -ForegroundColor Green
+    } catch {
+        Write-Host "  Codex position failed (will use default): $_" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "中枢: 外部 (不启动额外窗口)" -ForegroundColor Green
 }
 
 # ---- Resolve worker providers ------------------------------------------------
@@ -158,7 +164,12 @@ Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host " Dashboard Ready" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host " Main (Codex) :     ${left},${top} ${mainW}x${totalH}"
+if ($Hub -eq "tui") {
+    Write-Host " 中枢: DeepSeek TUI (当前会话)"
+    Write-Host " 用 hub.ps1 的 Start-Hub 直接管理"
+} else {
+    Write-Host " Main ($Hub) : ${left},${top} ${mainW}x${totalH}"
+}
 foreach ($w in $workerProcs) {
     Write-Host " Worker ($($w.Name)) : side panel"
 }
